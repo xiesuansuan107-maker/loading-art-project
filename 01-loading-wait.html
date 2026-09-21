@@ -1,0 +1,1904 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOADING</title>
+<style>
+  :root{
+    --bg: #0a0a0a;
+    --text-primary: #eaeaea;
+    --text-secondary: #7a7a7a;
+    --track: #262626;
+    --fill: #d8d8d8;
+    --border: #2c2c2c;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    overflow: hidden;
+  }
+
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .screen {
+    width: min(90vw, 420px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 28px;
+  }
+
+  .loading-label {
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
+    font-weight: 400;
+  }
+
+  .percent {
+    font-family: "SF Mono", "Roboto Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(64px, 14vw, 96px);
+    font-weight: 300;
+    line-height: 1;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+    min-height: clamp(64px, 14vw, 96px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.25s ease;
+    position: relative;
+    z-index: 9999;
+  }
+
+  .percent.percent--message {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+  }
+
+  .bar-track {
+    width: 100%;
+    height: 2px;
+    background: var(--track);
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--fill);
+    transition: width 1.1s ease;
+  }
+
+  .status-label {
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    min-height: 16px;
+  }
+
+  .controls {
+    display: flex;
+    gap: 10px;
+    margin-top: 8px;
+    position: relative;
+    z-index: 9998; /* keeps WAIT/ACCELERATE/SKIP clickable no matter how high the window stack climbs */
+  }
+
+  .ctrl-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    padding: 9px 16px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: border-color 0.2s ease, color 0.2s ease;
+  }
+
+  .ctrl-btn:hover {
+    border-color: #4a4a4a;
+    color: var(--text-primary);
+  }
+
+  .ctrl-btn:active {
+    border-color: #6a6a6a;
+    color: var(--text-primary);
+  }
+
+  .feedback-label {
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    min-height: 16px;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+  }
+
+  .feedback-label.show {
+    opacity: 1;
+  }
+
+  .debug-panel {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    font-family: "SF Mono", "Roboto Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    line-height: 1.6;
+    letter-spacing: 0.03em;
+    color: #4a4a4a;
+    border: 1px solid #1e1e1e;
+    padding: 8px 10px;
+    z-index: 9998;
+  }
+
+  .debug-panel .debug-title {
+    color: #333;
+    letter-spacing: 0.08em;
+    margin-bottom: 2px;
+  }
+
+  /* ---- Information Layer (Stage 3, Step 1: structure only) ----
+     A separate overlay, independent of the Loading Layer (.screen).
+     pointer-events: none means it never intercepts clicks — WAIT /
+     ACCELERATE / SKIP keep working exactly as before, untouched.
+     It has no background and no content yet, so it is fully
+     invisible at this step. Future information items will be
+     positioned in the corners/edges below, deliberately leaving the
+     center of the screen (where 37% lives) empty. */
+  .information-layer {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  .info-item {
+    position: absolute;
+    font-size: 12px;
+    letter-spacing: 0.03em;
+    color: var(--text-secondary);
+  }
+
+  .info-item--top-left     { top: 20px;    left: 20px; }
+  .info-item--top-right    { top: 20px;    right: 20px; }
+  .info-item--bottom-left  { bottom: 20px; left: 20px; }
+  .info-item--bottom-right { bottom: 20px; right: 20px; }
+
+  /* ---- Information card design system (Stage 3) ----
+     One shared card shell, styled the way a real dark-mode phone or
+     desktop surface renders a card: a slightly lighter flat panel
+     with soft depth, not a glowing or decorated "art" object. Every
+     information source below reuses this shell and differs only in
+     internal layout/typography hierarchy — never in color, glow, or
+     ornament — because that is how real weather widgets, news
+     cards, notifications, etc. actually differ from each other. */
+  .info-card {
+    width: 200px;
+    background: #151515;
+    border: 1px solid #232323;
+    border-radius: 10px;
+    padding: 10px 12px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--text-primary);
+  }
+
+  .card-eyebrow {
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+  }
+
+  .card-headline {
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.35;
+    color: var(--text-primary);
+  }
+
+  .card-meta {
+    font-size: 10.5px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  .card-tag {
+    display: inline-block;
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    border: 1px solid #2c2c2c;
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-bottom: 5px;
+  }
+
+  /* Weather: like a weather app widget — place name, then one large
+     temperature number as the visual anchor, condition underneath. */
+  .info-card--weather .card-headline {
+    font-size: 26px;
+    font-weight: 300;
+    font-family: "SF Mono", "Roboto Mono", "Consolas", monospace;
+  }
+
+  /* Trending: like a social trends list — a rank number sits to the
+     left of the topic instead of above it. */
+  .info-card--trending {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .card-rank {
+    font-size: 15px;
+    font-weight: 300;
+    color: var(--text-secondary);
+    font-family: "SF Mono", "Roboto Mono", "Consolas", monospace;
+    line-height: 1.3;
+  }
+
+  /* Browser prompt: like a permission bar — question, then two
+     plain-text pseudo-actions on one line, no buttons drawn. */
+  .info-card--browser .card-meta {
+    display: flex;
+    gap: 14px;
+  }
+
+  /* ============================================================
+     WINDOW STACK design system (Stage 3 visual upgrade).
+     Real desktop/phone windows are light — white/light-gray chrome
+     with dark text — even sitting on a dark page, which is exactly
+     why they read as "an intrusion" rather than belonging to the
+     artwork's own palette. No color, no gradient, no glow: only a
+     soft shadow for depth, same restraint as everything else here.
+     ============================================================ */
+  .info-window {
+    position: fixed;
+    background: #ededed;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    pointer-events: auto; /* re-enabled here even though the layer
+                              itself is pointer-events: none, so the
+                              close button is clickable without ever
+                              affecting clicks anywhere else on the
+                              page */
+    transition: opacity 0.18s ease;
+  }
+
+  .info-window__titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #dcdcdc;
+    border-bottom: 1px solid #cacaca;
+    padding: 5px 6px 5px 9px;
+  }
+
+  .info-window__title {
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    color: #333;
+  }
+
+  .info-window__close {
+    width: 15px;
+    height: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #9a9a9a;
+    border-radius: 2px;
+    background: transparent;
+    color: #555;
+    font-size: 10px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .info-window__close:hover {
+    background: #cfcfcf;
+  }
+
+  .info-window__body {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: #1c1c1c;
+  }
+
+  .win-eyebrow {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    color: #6b6b6b;
+    margin-bottom: 4px;
+  }
+
+  .win-headline {
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.35;
+    color: #1a1a1a;
+  }
+
+  .win-headline--big {
+    font-size: 24px;
+    font-weight: 300;
+    font-family: "SF Mono", "Roboto Mono", "Consolas", monospace;
+    color: #1a1a1a;
+  }
+
+  .win-meta {
+    font-size: 10.5px;
+    color: #6b6b6b;
+    margin-top: 4px;
+  }
+
+  .win-meta--row {
+    display: flex;
+    gap: 14px;
+  }
+
+  .win-tag {
+    display: inline-block;
+    font-size: 9.5px;
+    letter-spacing: 0.03em;
+    color: #6b6b6b;
+    border: 1px solid #c6c6c6;
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-bottom: 5px;
+  }
+
+  .win-trending {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .win-rank {
+    font-size: 15px;
+    font-weight: 300;
+    color: #6b6b6b;
+    font-family: "SF Mono", "Roboto Mono", "Consolas", monospace;
+    line-height: 1.3;
+  }
+
+  .win-schedule-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 11px;
+    color: #1a1a1a;
+    padding: 4px 0;
+    border-bottom: 1px solid #d8d8d8;
+  }
+
+  .win-schedule-row:last-child {
+    border-bottom: none;
+  }
+
+  .win-schedule-time {
+    font-family: "SF Mono", "Roboto Mono", "Consolas", monospace;
+    font-size: 10.5px;
+    color: #6b6b6b;
+    flex-shrink: 0;
+  }
+
+  .win-save-track {
+    width: 100%;
+    height: 3px;
+    background: #d5d5d5;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 6px;
+  }
+
+  .win-save-fill {
+    height: 100%;
+    width: 0%;
+    background: #1a1a1a;
+    transition: width 1.8s ease;
+  }
+
+  /* Device clock: deliberately NOT a card. A real system clock is
+     just plain small text sitting at a screen edge — no border, no
+     background, no shadow — so this stays visually distinct from
+     the notification-style cards above. */
+  .info-clock {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-variant-numeric: tabular-nums;
+    font-size: 20px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: var(--text-secondary);
+    opacity: 0;
+    transition: opacity 1s ease;
+  }
+
+  /* ---- Day 5: manual session end (Option A) ---- */
+  .end-session-btn {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    background: transparent;
+    border: 1px solid #2c2c2c;
+    color: #4a4a4a;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    padding: 6px 10px;
+    cursor: pointer;
+    z-index: 9998; /* same protected tier as the debug panel / controls */
+    transition: border-color 0.2s ease, color 0.2s ease;
+  }
+
+  .end-session-btn:hover {
+    border-color: #5a5a5a;
+    color: #b0b0b0;
+  }
+
+  .session-complete-overlay {
+    position: fixed;
+    inset: 0;
+    background: #050505;
+    z-index: 10000; /* above absolutely everything, including 37% */
+    display: none;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .session-complete-overlay.show {
+    display: flex;
+  }
+
+  .session-complete-card {
+    text-align: center;
+    color: var(--text-primary);
+  }
+
+  .session-complete-title {
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    color: var(--text-secondary);
+    margin-bottom: 28px;
+  }
+
+  .session-complete-stats {
+    font-family: "SF Mono", "Roboto Mono", "Consolas", monospace;
+    font-size: 14px;
+    line-height: 2.1;
+    color: var(--text-primary);
+    letter-spacing: 0.02em;
+  }
+
+  .session-complete-stats span {
+    color: var(--text-secondary);
+    display: inline-block;
+    width: 140px;
+    text-align: left;
+  }
+</style>
+</head>
+<body>
+
+  <div class="screen">
+    <div class="loading-label">LOADING……</div>
+    <div class="percent" id="percent">0%</div>
+    <div class="bar-track">
+      <div class="bar-fill" id="barFill"></div>
+    </div>
+    <div class="status-label" id="statusLabel">PLEASE WAIT</div>
+
+    <div class="controls">
+      <button class="ctrl-btn" id="btnWait">WAIT</button>
+      <button class="ctrl-btn" id="btnAccelerate">ACCELERATE</button>
+      <button class="ctrl-btn" id="btnSkip">SKIP</button>
+    </div>
+    <div class="feedback-label" id="feedbackLabel"></div>
+  </div>
+
+  <div class="debug-panel" id="debugPanel">
+    <div class="debug-title">DEBUG</div>
+    <div>WAITING TIME <span id="dbgWaitingTime">00:00.0</span></div>
+    <div>CLICK <span id="dbgClick">0</span></div>
+    <div>ACCELERATE <span id="dbgAccelerate">0</span></div>
+    <div>SKIP <span id="dbgSkip">0</span></div>
+  </div>
+
+  <div class="information-layer" id="informationLayer"></div>
+
+  <button class="end-session-btn" id="btnEndSession" type="button">END SESSION</button>
+
+  <div class="session-complete-overlay" id="sessionCompleteOverlay">
+    <div class="session-complete-card">
+      <div class="session-complete-title">SESSION COMPLETE</div>
+      <div class="session-complete-stats">
+        <div><span>WAITING TIME</span><span id="scWaitingTime">0.0s</span></div>
+        <div><span>CLICK</span><span id="scClick">0</span></div>
+        <div><span>ACCELERATE</span><span id="scAccelerate">0</span></div>
+        <div><span>SKIP</span><span id="scSkip">0</span></div>
+        <div><span>EXIT</span><span id="scExit">YES</span></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ============================================================
+  // AUDIO MANAGER — Day 4, fully independent sound module.
+  //
+  // This block never reads or writes sessionData, never touches
+  // waitingTime/clickCount/accelerateCount/skipCount/exitTime, never
+  // touches Core Zone / Button Safe Zone / windowSchedule /
+  // climbSequence / wobbleStep. It only exposes small play*()
+  // functions that existing code calls, as an added line, at the
+  // moment an event has already happened — it never decides WHEN
+  // anything happens in the rest of the file. All Web Audio API,
+  // generated in real time — no audio files, no melodies, no real
+  // system/brand sounds.
+  //
+  // Every play*() function is wrapped so it can never throw into its
+  // caller: if Web Audio isn't available, or the AudioContext hasn't
+  // been unlocked by a user gesture yet, calls silently do nothing.
+  // This guarantees the sound module can never break or alter any
+  // existing logic, even if audio itself fails for any reason.
+  // ============================================================
+  const AudioManager = (() => {
+    let ctx = null;
+    let unlocked = false;
+    let mutedForever = false;
+    let ambientTimer = null;
+    let hfNoiseTimer = null;
+    let baseLayerNodes = null; // set once the Stage 1 hum actually starts, so stopAllSounds() can reach it
+    const moduleStartTime = Date.now();
+
+    function ensureContext() {
+      if (!ctx) {
+        try {
+          const Ctor = window.AudioContext || window.webkitAudioContext;
+          if (Ctor) ctx = new Ctor();
+        } catch (e) {
+          ctx = null;
+        }
+      }
+      return ctx;
+    }
+
+    // Browsers refuse to run an AudioContext until the user has
+    // interacted with the page at least once. Rather than tying that
+    // to any one button (which would mean no sound at all until the
+    // person happens to click WAIT/ACCELERATE/SKIP), this listens for
+    // the FIRST interaction of any kind, anywhere on the page, and
+    // silently unlocks audio then — completely separate from what
+    // that interaction was actually for.
+    let baseLayerStarted = false;
+    const PULSE_LAYER_START_MS = 23000; // Stage 2 begins: electronic pulses layer in on top of the sustained Stage 1 hum
+
+    // ---- Stage 1 | Low Sound: continuous base layer ----
+    // Two sine oscillators, very low frequency and very slightly
+    // detuned from each other, produce a slow, natural "beating"
+    // hum — the kind of sound a running computer or device makes —
+    // rather than a single flat tone, which would read as more
+    // obviously synthetic. A heavily low-passed noise floor is
+    // layered underneath at an even lower level for texture. No
+    // melody, no pitch movement, no discrete notification-style
+    // hits — just a continuous, barely-there bed. It fades in softly
+    // on unlock and then SUSTAINS — per Stage 2, this is never
+    // removed; it keeps running underneath everything else and is
+    // only ever silenced by the final abrupt mute (stopAllSounds).
+    function startBaseLayer() {
+      if (baseLayerStarted || mutedForever) return;
+      const c = ctx;
+      if (!c) return;
+      baseLayerStarted = true;
+
+      try {
+        const now = c.currentTime;
+        const TONE_PEAK = 0.011;
+        const NOISE_PEAK = 0.005;
+
+        const baseGain = c.createGain();
+        baseGain.gain.setValueAtTime(0.0001, now);
+        baseGain.gain.linearRampToValueAtTime(TONE_PEAK, now + 1.5);
+        baseGain.connect(c.destination);
+
+        const oscA = c.createOscillator();
+        oscA.type = 'sine';
+        oscA.frequency.setValueAtTime(60, now);
+        const oscB = c.createOscillator();
+        oscB.type = 'sine';
+        oscB.frequency.setValueAtTime(61.2, now); // slight detune -> slow natural beating, not a melody
+        oscA.connect(baseGain);
+        oscB.connect(baseGain);
+
+        const noiseGain = c.createGain();
+        noiseGain.gain.setValueAtTime(0.0001, now);
+        noiseGain.gain.linearRampToValueAtTime(NOISE_PEAK, now + 1.5);
+        noiseGain.connect(c.destination);
+
+        const noiseSeconds = 2;
+        const bufferSize = Math.floor(c.sampleRate * noiseSeconds);
+        const noiseBuffer = c.createBuffer(1, bufferSize, c.sampleRate);
+        const data = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        const noiseSource = c.createBufferSource();
+        noiseSource.buffer = noiseBuffer;
+        noiseSource.loop = true;
+        const noiseFilter = c.createBiquadFilter();
+        noiseFilter.type = 'lowpass';
+        noiseFilter.frequency.setValueAtTime(180, now); // heavily filtered — a soft rumble, never a hiss
+        noiseSource.connect(noiseFilter);
+        noiseFilter.connect(noiseGain);
+
+        oscA.start(now);
+        oscB.start(now);
+        noiseSource.start(now);
+        // No .stop() scheduled — this layer sustains until stopAllSounds() tears it down.
+
+        baseLayerNodes = { baseGain, noiseGain, oscA, oscB, noiseSource };
+      } catch (e) {
+        // Audio must never throw into the caller.
+      }
+    }
+
+    function unlock() {
+      if (unlocked) return;
+      unlocked = true;
+      const c = ensureContext();
+      if (c && c.state === 'suspended') {
+        c.resume().catch(() => {});
+      }
+      startBaseLayer();
+    }
+    ['click', 'keydown', 'touchstart'].forEach(evt => {
+      document.addEventListener(evt, unlock, { once: true, capture: true });
+    });
+
+    function playTone(opts) {
+      if (mutedForever) return;
+      const c = ctx;
+      if (!c || c.state !== 'running') return; // silent no-op pre-unlock
+      try {
+        const freq = opts.freq || 1000;
+        const freqTo = opts.freqTo != null ? opts.freqTo : null;
+        const durationMs = opts.duration || 30;
+        const gainPeak = opts.gain != null ? opts.gain : 0.02;
+        const type = opts.type || 'sine';
+        const now = c.currentTime;
+        const durationSec = durationMs / 1000;
+
+        const osc = c.createOscillator();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, now);
+        if (freqTo !== null) {
+          osc.frequency.linearRampToValueAtTime(freqTo, now + durationSec);
+        }
+
+        const g = c.createGain();
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.linearRampToValueAtTime(gainPeak, now + 0.004);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + durationSec);
+
+        osc.connect(g);
+        g.connect(c.destination);
+        osc.start(now);
+        osc.stop(now + durationSec + 0.02);
+      } catch (e) {
+        // Audio must never throw into the caller.
+      }
+    }
+
+    // 1. Formal number change (called from setPercentAnimated).
+    function playTick() {
+      playTone({ freq: 1600, duration: 30, gain: 0.020, type: 'sine' });
+    }
+
+    // Reaching the resting 37% after a wobble cycle — a slightly more
+    // "resolved" two-note sound, distinct from the plain tick.
+    function playSettle() {
+      playTone({ freq: 1200, duration: 25, gain: 0.022, type: 'sine' });
+      setTimeout(() => playTone({ freq: 900, duration: 25, gain: 0.018, type: 'sine' }), 40);
+    }
+
+    // An information window actually appearing (opacity reaching 1).
+    // quiet:true is used for reappearance, per requirement that it
+    // must never be louder than the first appearance.
+    function playPop(reappearing) {
+      playTone({
+        freq: 500, freqTo: 900, duration: 50,
+        gain: reappearing ? 0.018 : 0.028,
+        type: 'triangle'
+      });
+    }
+
+    // Button feedback — deliberately unequal loudness/timbre per kind.
+    function playClick(kind) {
+      if (kind === 'wait') {
+        playTone({ freq: 900, duration: 18, gain: 0.012, type: 'sine' });
+      } else if (kind === 'accelerate') {
+        playTone({ freq: 1500, duration: 28, gain: 0.028, type: 'sine' });
+      } else if (kind === 'skip') {
+        playTone({ freq: 1100, duration: 22, gain: 0.022, type: 'square' });
+      }
+    }
+
+    // Window close — intentionally the softest, least noticeable sound.
+    function playClose() {
+      playTone({ freq: 1000, freqTo: 700, duration: 35, gain: 0.015, type: 'sine' });
+    }
+
+    // A short burst of filtered noise, rather than a clean oscillator
+    // tone — this is what makes the Stage 2 layers sound like
+    // "electronic/processing noise" instead of a UI notification
+    // tick. Used only by the two ambient layers below, never by the
+    // UI-event sounds above.
+    function playNoiseBurst(opts) {
+      if (mutedForever) return;
+      const c = ctx;
+      if (!c || c.state !== 'running') return;
+      try {
+        const durationMs = opts.duration || 18;
+        const gainPeak = opts.gain != null ? opts.gain : 0.008;
+        const freq = opts.freq || 1000;
+        const q = opts.q != null ? opts.q : 1.4;
+        const filterType = opts.filterType || 'bandpass';
+        const now = c.currentTime;
+        const durationSec = durationMs / 1000;
+        const bufferSize = Math.max(1, Math.floor(c.sampleRate * durationSec));
+        const buffer = c.createBuffer(1, bufferSize, c.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        const src = c.createBufferSource();
+        src.buffer = buffer;
+        const filter = c.createBiquadFilter();
+        filter.type = filterType;
+        filter.frequency.setValueAtTime(freq, now);
+        filter.Q.setValueAtTime(q, now);
+        const g = c.createGain();
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.linearRampToValueAtTime(gainPeak, now + 0.003);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + durationSec);
+        src.connect(filter);
+        filter.connect(g);
+        g.connect(c.destination);
+        src.start(now);
+        src.stop(now + durationSec + 0.02);
+      } catch (e) {
+        // Audio must never throw into the caller.
+      }
+    }
+
+    // ---- Stage 2 | Electronic Noise ----
+    // Two independently-timed layers, both built from filtered noise
+    // bursts (not oscillator "ticks"), so they read as the incidental
+    // sound of digital processing rather than notifications:
+    //
+    //   Layer A — "electronic pulses": starts right at 23s (the
+    //   moment Stage 1 hands off), mid-frequency, gradually more
+    //   frequent through 58s.
+    //
+    //   Layer B — "high-frequency digital noise": starts later (38s),
+    //   even quieter and higher-pitched, also gradually more
+    //   frequent. Layered ON TOP of Layer A and the sustained Stage 1
+    //   hum — nothing already playing is ever removed.
+    //
+    // Both stop, along with everything else, at the existing 58s
+    // total-mute point (stopAllSounds).
+    function ambientIntervalFor(elapsedMs) {
+      if (elapsedMs < 25000) return 9000 + Math.random() * 5000;  // almost inaudible
+      if (elapsedMs < 38000) return 4000 + Math.random() * 3000;  // faint awareness
+      if (elapsedMs < 50000) return 1500 + Math.random() * 1500;  // increasing
+      return 500 + Math.random() * 700;                            // high density
+    }
+
+    function ambientStep() {
+      if (mutedForever) return;
+      const elapsed = Date.now() - moduleStartTime;
+      if (elapsed >= 58000) {
+        stopAllSounds();
+        return;
+      }
+      // Before 23s, this layer stays completely silent (it keeps
+      // checking, but plays nothing) — Stage 1 is the hum alone.
+      if (elapsed < PULSE_LAYER_START_MS) {
+        ambientTimer = setTimeout(ambientStep, 1000);
+        return;
+      }
+      playNoiseBurst({ freq: 800 + Math.random() * 400, q: 1.4, duration: 18, gain: 0.009, filterType: 'bandpass' });
+      ambientTimer = setTimeout(ambientStep, ambientIntervalFor(elapsed));
+    }
+
+    function startAmbient() {
+      if (ambientTimer || mutedForever) return;
+      ambientTimer = setTimeout(ambientStep, ambientIntervalFor(0));
+    }
+
+    const HF_LAYER_START_MS = 38000; // Stage 2, second layer: joins in on top of the pulse layer
+
+    function hfNoiseIntervalFor(elapsedMs) {
+      const t = Math.min(1, Math.max(0, (elapsedMs - HF_LAYER_START_MS) / (58000 - HF_LAYER_START_MS)));
+      const maxInterval = 8500;
+      const minInterval = 2200;
+      const base = maxInterval - (maxInterval - minInterval) * t;
+      return base + Math.random() * base * 0.4;
+    }
+
+    function hfNoiseStep() {
+      if (mutedForever) return;
+      const elapsed = Date.now() - moduleStartTime;
+      if (elapsed >= 58000) return; // stopAllSounds() (triggered by ambientStep) already tears this down
+      if (elapsed < HF_LAYER_START_MS) {
+        hfNoiseTimer = setTimeout(hfNoiseStep, 1000);
+        return;
+      }
+      playNoiseBurst({ freq: 3600 + Math.random() * 1400, q: 2.2, duration: 14, gain: 0.005, filterType: 'bandpass' });
+      hfNoiseTimer = setTimeout(hfNoiseStep, hfNoiseIntervalFor(elapsed));
+    }
+
+    function startHfNoiseLayer() {
+      if (hfNoiseTimer || mutedForever) return;
+      hfNoiseTimer = setTimeout(hfNoiseStep, 1000);
+    }
+
+    // Manual override: collapse the wait to a short interval right
+    // now, without altering the elapsed-time curve itself. Exposed
+    // for possible future use — nothing currently calls this.
+    function increaseDensity() {
+      if (mutedForever) return;
+      clearTimeout(ambientTimer);
+      ambientTimer = setTimeout(ambientStep, 400 + Math.random() * 400);
+    }
+
+    function stopAllSounds() {
+      mutedForever = true;
+      clearTimeout(ambientTimer);
+      ambientTimer = null;
+      clearTimeout(hfNoiseTimer);
+      hfNoiseTimer = null;
+
+      // The Stage 1 hum now sustains indefinitely (Stage 2 requires
+      // it never be removed on its own), so this is the only place
+      // it ever actually gets silenced — abruptly, per the final
+      // total-mute requirement, not a fade.
+      if (ctx && baseLayerNodes) {
+        try {
+          const now = ctx.currentTime;
+          baseLayerNodes.baseGain.gain.cancelScheduledValues(now);
+          baseLayerNodes.baseGain.gain.setValueAtTime(0.0001, now);
+          baseLayerNodes.noiseGain.gain.cancelScheduledValues(now);
+          baseLayerNodes.noiseGain.gain.setValueAtTime(0.0001, now);
+          baseLayerNodes.oscA.stop(now + 0.02);
+          baseLayerNodes.oscB.stop(now + 0.02);
+          baseLayerNodes.noiseSource.stop(now + 0.02);
+        } catch (e) {
+          // Audio must never throw into the caller.
+        }
+        baseLayerNodes = null;
+      }
+    }
+
+    return {
+      playTick, playSettle, playPop, playClick, playClose,
+      startAmbient, startHfNoiseLayer, increaseDensity, stopAllSounds
+    };
+  })();
+
+  AudioManager.startAmbient();
+  AudioManager.startHfNoiseLayer();
+
+  const percentEl = document.getElementById('percent');
+  const barFillEl = document.getElementById('barFill');
+  const statusEl = document.getElementById('statusLabel');
+  const feedbackEl = document.getElementById('feedbackLabel');
+  const dbgWaitingTimeEl = document.getElementById('dbgWaitingTime');
+  const dbgClickEl = document.getElementById('dbgClick');
+  const dbgAccelerateEl = document.getElementById('dbgAccelerate');
+  const dbgSkipEl = document.getElementById('dbgSkip');
+
+  // ---- Session behavior data ----
+  // One object holds everything this stage records about the current
+  // session. sessionStartTime is set once, the moment this script
+  // runs. waitingTime is never incremented by hand — it is
+  // recalculated every tick from the real system clock, so it always
+  // reflects true elapsed time. exitTime stays null until the page is
+  // actually being left (see pagehide listener below).
+  const sessionData = {
+    sessionStartTime: Date.now(),
+    waitingTime: 0,
+    clickCount: 0,
+    accelerateCount: 0,
+    skipCount: 0,
+    exitTime: null,
+    earlyExit: null
+  };
+
+  // Exposed on window so it can be inspected live from the browser
+  // console at any time by typing: sessionData
+  window.sessionData = sessionData;
+
+  // ============================================================
+  // ATTENTION EVENT LOG — Day 5, Step 1: structure only.
+  //
+  // Completely independent of sessionData. attentionLog is its own
+  // array; recordEvent() only ever appends to it. Neither is called
+  // from anywhere else in this file yet — attentionLog stays empty
+  // until it is manually tested or wired up in a later step.
+  // elapsedMs is computed from sessionData.sessionStartTime (read
+  // only, never written), so there is only one session start time
+  // in the whole file. waitingTime is never used here.
+  // ============================================================
+  const attentionLog = [];
+
+  function recordEvent(eventType, detail) {
+    attentionLog.push({
+      timestamp: Date.now(),
+      elapsedMs: Date.now() - sessionData.sessionStartTime,
+      type: eventType,
+      detail: detail
+    });
+  }
+
+  // Exposed for manual testing from the browser console, e.g.:
+  //   recordEvent("test", { message: "test event" })
+  //   window.attentionLog
+  window.attentionLog = attentionLog;
+  window.recordEvent = recordEvent;
+
+  // A session that ends before the number even finishes its initial
+  // climb and settles into the 37% wobble (9.6s in) hasn't really
+  // encountered the piece's core behavior yet — so it's marked as
+  // an early exit. This threshold is the same 9600ms moment already
+  // used elsewhere in this file to start the ambient wobble.
+  const EARLY_EXIT_THRESHOLD_MS = 9600;
+
+  // Because exitTime is only known the instant the page is actually
+  // closing, there is no on-screen way to see it in the same tab
+  // that produced it. To make it possible to check the exit record
+  // at all, the finished record is saved to this browser's local
+  // storage (private to this one browser, not a server or database)
+  // and printed to the console the next time the page loads.
+  try {
+    const previousRecord = localStorage.getItem('loadingSessionRecord');
+    if (previousRecord) {
+      console.log('PREVIOUS SESSION RECORD:', JSON.parse(previousRecord));
+    }
+  } catch (e) {
+    // Local storage may be unavailable (e.g. private browsing) —
+    // the experience itself does not depend on it, so this is safe
+    // to ignore.
+  }
+
+  function formatElapsed(ms) {
+    const totalTenths = Math.floor(ms / 100);
+    const tenths = totalTenths % 10;
+    const totalSeconds = Math.floor(totalTenths / 10);
+    const seconds = totalSeconds % 60;
+    const minutes = Math.floor(totalSeconds / 60);
+    const pad2 = n => String(n).padStart(2, '0');
+    return pad2(minutes) + ':' + pad2(seconds) + '.' + tenths;
+  }
+
+  function updateDebugPanel() {
+    dbgWaitingTimeEl.textContent = formatElapsed(sessionData.waitingTime);
+    dbgClickEl.textContent = sessionData.clickCount;
+    dbgAccelerateEl.textContent = sessionData.accelerateCount;
+    dbgSkipEl.textContent = sessionData.skipCount;
+  }
+
+  function tick() {
+    sessionData.waitingTime = Date.now() - sessionData.sessionStartTime;
+    updateDebugPanel();
+  }
+
+  tick();
+  setInterval(tick, 100);
+
+  // Records the moment the user actually leaves this session
+  // (closing the tab, navigating away, or reloading). pagehide fires
+  // reliably in these cases, including on mobile, unlike relying on
+  // a manual "exit" action the user might not take.
+  window.addEventListener('pagehide', () => {
+    sessionData.exitTime = Date.now();
+    // Recomputed precisely at the moment of exit, rather than relying
+    // on the last periodic tick (which could be up to 100ms stale).
+    sessionData.waitingTime = sessionData.exitTime - sessionData.sessionStartTime;
+    sessionData.earlyExit = sessionData.waitingTime < EARLY_EXIT_THRESHOLD_MS;
+
+    try {
+      localStorage.setItem('loadingSessionRecord', JSON.stringify(sessionData));
+    } catch (e) {
+      // Ignored — see the matching try/catch on load above.
+    }
+  });
+
+  // ============================================================
+  // DAY 5 | Manual session end (Option A, as you confirmed).
+  //
+  // A user-triggered alternative to pagehide, for the simple reason
+  // that pagehide fires as the page is already being destroyed, so
+  // it can never actually show a summary screen. Clicking this
+  // button finalizes sessionData's fields the same way the pagehide
+  // handler above does (duplicated here on purpose, so that existing
+  // handler is never modified), then reveals a SESSION COMPLETE
+  // overlay reading the finalized values straight off sessionData.
+  // sessionData's shape and normal update logic are untouched.
+  // ============================================================
+  document.getElementById('btnEndSession').addEventListener('click', () => {
+    sessionData.exitTime = Date.now();
+    sessionData.waitingTime = sessionData.exitTime - sessionData.sessionStartTime;
+    sessionData.earlyExit = sessionData.waitingTime < EARLY_EXIT_THRESHOLD_MS;
+
+    try {
+      localStorage.setItem('loadingSessionRecord', JSON.stringify(sessionData));
+    } catch (e) {
+      // Ignored — same as the pagehide path.
+    }
+
+    document.getElementById('scWaitingTime').textContent =
+      (sessionData.waitingTime / 1000).toFixed(1) + 's';
+    document.getElementById('scClick').textContent = sessionData.clickCount;
+    document.getElementById('scAccelerate').textContent = sessionData.accelerateCount;
+    document.getElementById('scSkip').textContent = sessionData.skipCount;
+    document.getElementById('scExit').textContent = 'YES';
+
+    document.getElementById('sessionCompleteOverlay').classList.add('show');
+  });
+
+  let currentPercentValue = 0;
+  let isShowingPercentMessage = false;
+
+  function setPercent(value) {
+    currentPercentValue = value;
+    if (!isShowingPercentMessage) {
+      percentEl.textContent = value + '%';
+    }
+    barFillEl.style.width = value + '%';
+  }
+
+  // A gentle crossfade version of setPercent, used only by the climb
+  // sequence below. It reuses the exact same opacity transition
+  // already defined on .percent (0.25s ease) — no scale, no rotate,
+  // no glitch, no particles, nothing exaggerated. Position, font
+  // size, font family and color are completely untouched; only
+  // opacity briefly dips and recovers around the moment the digits
+  // change.
+  function setPercentAnimated(value) {
+    percentEl.style.opacity = '0';
+    setTimeout(() => {
+      setPercent(value);
+      percentEl.style.opacity = '1';
+      AudioManager.playTick();
+    }, 220);
+  }
+
+  // Stage timeline, part 1: first 5 seconds stay perfectly clean at
+  // 0%. At 5s, the number begins climbing through this exact fixed
+  // order — 0 -> 2 -> 7 -> 27 -> 31 -> 33 -> 35 -> 37 — with a
+  // deliberately long dwell time on each number (per your request:
+  // "slow, pause, wait, change again, wait again") and a short,
+  // slight crossfade between them, not a long animation. No extra
+  // number nodes beyond these 8. Once it reaches 37%, this sequence
+  // is done; the wobble system (below) takes over from there.
+  const climbSequence = [
+    { at: 6800,  value: 2  }, // 0% held ~1.8s after the 5s mark, then first change
+    { at: 8800,  value: 7  }, // 2% held ~2s
+    { at: 11800, value: 27 }, // 7% held ~3s
+    { at: 16800, value: 31 }, // 27% held ~5s
+    { at: 18600, value: 33 }, // 31% held ~1.8s
+    { at: 20400, value: 35 }, // 33% held ~1.8s
+    { at: 24900, value: 37 }  // 35% held ~4.5s — noticeably longer
+                              // than the other gaps, so the jump to
+                              // the final 37% reads as a deliberate
+                              // pause ("almost there"), not a
+                              // continuation of the same rhythm
+  ];
+
+  climbSequence.forEach(step => {
+    setTimeout(() => setPercentAnimated(step.value), step.at);
+  });
+
+  // Stage timeline, part 2: once the climb reaches 37%, the number
+  // stops behaving like a normal loading bar. Instead it wanders in
+  // small, irregular steps within a narrow band (36–41%), at random
+  // intervals, for a randomized total length of time — so no two
+  // sessions play out in exactly the same order or for exactly the
+  // same duration. When that wandering period ends, the value walks
+  // back down to 37% one step at a time and locks there permanently.
+  // It never goes above 41% and never approaches 100%.
+  const WOBBLE_MIN = 36;
+  const WOBBLE_MAX = 41;
+  let wobbleTimer = null;
+
+  function startWobble() {
+    let value = currentPercentValue;
+    const wobbleDuration = 12000 + Math.random() * 8000; // 12s–20s
+    const stopAt = Date.now() + wobbleDuration;
+
+    function wobbleStep() {
+      if (Date.now() >= stopAt) {
+        settleTo37();
+        return;
+      }
+      const delta = Math.floor(Math.random() * 3) - 1; // -1, 0, or 1
+      value = Math.min(WOBBLE_MAX, Math.max(WOBBLE_MIN, value + delta));
+      setPercent(value);
+      const nextDelay = 600 + Math.random() * 1400; // 0.6s–2s, irregular
+      wobbleTimer = setTimeout(wobbleStep, nextDelay);
+    }
+
+    wobbleTimer = setTimeout(wobbleStep, 600 + Math.random() * 1400);
+  }
+
+  function settleTo37() {
+    if (currentPercentValue === 37) {
+      AudioManager.playSettle();
+      return; // locked — no further timers are scheduled
+    }
+    const step = currentPercentValue > 37 ? -1 : 1;
+    setPercent(currentPercentValue + step);
+    wobbleTimer = setTimeout(settleTo37, 500 + Math.random() * 500);
+  }
+
+  setTimeout(startWobble, 25200);
+
+  let feedbackTimer = null;
+  function showFeedback(text) {
+    clearTimeout(feedbackTimer);
+    feedbackEl.textContent = text;
+    feedbackEl.classList.add('show');
+    feedbackTimer = setTimeout(() => {
+      feedbackEl.classList.remove('show');
+    }, 1400);
+  }
+
+  // ---- Behavior counters, written directly onto sessionData ----
+  // clickCount counts every press of any of the three buttons.
+  // accelerateCount and skipCount count presses of that specific
+  // button only. WAIT never increments accelerateCount or skipCount;
+  // ACCELERATE never increments skipCount; SKIP never increments
+  // accelerateCount. None of these ever touch sessionStartTime,
+  // waitingTime, or the percent value.
+
+  // ---- Illusion-of-control messages ----
+  // ACCELERATE and SKIP briefly replace the number in the percent
+  // display with a message that makes it *feel* like something
+  // happened ("time saved", "content skipped"). After the message,
+  // control passes to runClickBurst (below) rather than restoring
+  // directly. This never touches sessionData and never moves the
+  // real percent toward 100%.
+  let percentMsgFadeTimer = null;
+  let percentMsgRevertTimer = null;
+  let percentMsgRestoreTimer = null;
+  let clickBurstTimer = null;
+
+  function clearAllPercentTimers() {
+    clearTimeout(percentMsgFadeTimer);
+    clearTimeout(percentMsgRevertTimer);
+    clearTimeout(percentMsgRestoreTimer);
+    clearTimeout(clickBurstTimer);
+    clearTimeout(wobbleTimer);
+  }
+
+  function showPercentMessage(text, holdMs, onDone) {
+    clearAllPercentTimers();
+
+    isShowingPercentMessage = true;
+    percentEl.style.opacity = '0';
+
+    percentMsgFadeTimer = setTimeout(() => {
+      percentEl.textContent = text;
+      percentEl.classList.add('percent--message');
+      percentEl.style.opacity = '1';
+
+      percentMsgRevertTimer = setTimeout(() => {
+        percentEl.style.opacity = '0';
+
+        percentMsgRestoreTimer = setTimeout(() => {
+          percentEl.classList.remove('percent--message');
+          percentEl.style.opacity = '1';
+          if (onDone) {
+            onDone();
+          } else {
+            percentEl.textContent = currentPercentValue + '%';
+            isShowingPercentMessage = false;
+          }
+        }, 250);
+      }, holdMs);
+    }, 250);
+  }
+
+  // After the ACCELERATE / SKIP message disappears, the number jumps
+  // around 38–41% for about two seconds — as if the system were
+  // briefly "working" — before settling back on 37% for good. This is
+  // plain, instant number-swapping (the same technique already used
+  // for the ambient wobble), not an animated effect, to keep it
+  // restrained. It never touches sessionData or moves toward 100%.
+  function runClickBurst() {
+    clearTimeout(wobbleTimer); // pause the ambient wobble while this runs
+    const burstDuration = 2000;
+    const stopAt = Date.now() + burstDuration;
+
+    function burstStep() {
+      if (Date.now() >= stopAt) {
+        currentPercentValue = 37;
+        percentEl.textContent = '37%';
+        barFillEl.style.width = '37%';
+        isShowingPercentMessage = false;
+        startWobble(); // hand control back to the ambient wobble
+        return;
+      }
+      const jumpValue = 38 + Math.floor(Math.random() * 4); // 38–41
+      currentPercentValue = jumpValue;
+      percentEl.textContent = jumpValue + '%';
+      barFillEl.style.width = jumpValue + '%';
+      clickBurstTimer = setTimeout(burstStep, 250 + Math.random() * 200);
+    }
+
+    burstStep();
+  }
+
+  document.getElementById('btnWait').addEventListener('click', () => {
+    sessionData.clickCount++;
+    updateDebugPanel();
+    showFeedback('WAITING……');
+    AudioManager.playClick('wait');
+  });
+
+  document.getElementById('btnAccelerate').addEventListener('click', () => {
+    sessionData.clickCount++;
+    sessionData.accelerateCount++;
+    updateDebugPanel();
+    showFeedback('OPTIMIZING SPEED……');
+    AudioManager.playClick('accelerate');
+    setTimeout(() => showPercentMessage('ESTIMATED TIME SAVED: 12s', 1500, runClickBurst), 500);
+  });
+
+  document.getElementById('btnSkip').addEventListener('click', () => {
+    sessionData.clickCount++;
+    sessionData.skipCount++;
+    updateDebugPanel();
+    showFeedback('SKIPPING CURRENT CONTENT……');
+    AudioManager.playClick('skip');
+    setTimeout(() => showPercentMessage('CONTENT SKIPPED', 1500, runClickBurst), 500);
+  });
+
+  // ============================================================
+  // INFORMATION LAYER — Stage 3, Step 1: structure only.
+  //
+  // This block is intentionally self-contained. It only READS
+  // sessionData.waitingTime; it never writes to sessionData, never
+  // calls setPercent, and never touches the WAIT/ACCELERATE/SKIP
+  // handlers above. It runs on its own timer, separate from the
+  // existing tick() interval that drives the debug panel.
+  //
+  // informationLayer   — the DOM container future items render into
+  // informationItems   — the registry of future content (empty for
+  //                       now: weather, clock, news, notifications,
+  //                       hot search, recommendations, system
+  //                       updates, browser prompts, delivery status,
+  //                       messaging status will be added here later,
+  //                       one at a time)
+  // informationManager — decides, based on waitingTime, when each
+  //                       item in informationItems should appear,
+  //                       and renders it into informationLayer
+  // ============================================================
+
+  const informationLayer = document.getElementById('informationLayer');
+
+  // ============================================================
+  // CORE ZONE — the untouchable region around 37%.
+  //
+  // This is not "put things in the corners." It measures the real,
+  // currently-rendered position and size of the percent element
+  // (percentEl), adds a safety margin, and gives every future
+  // information item a genuine collision check against that
+  // rectangle before it's allowed to render. If the screen size or
+  // the 37% element's own size ever changes, the Core Zone is
+  // recalculated from the live layout — it is never hard-coded
+  // pixel coordinates.
+  // ============================================================
+
+  const CORE_ZONE_WIDTH_FRACTION = 0.33;  // ~33% of screen width
+  const CORE_ZONE_HEIGHT_FRACTION = 0.20; // ~20% of screen height
+
+  function getCoreZoneRect() {
+    const rect = percentEl.getBoundingClientRect();
+    const centerX = (rect.left + rect.right) / 2;
+    const centerY = (rect.top + rect.bottom) / 2;
+    const halfW = (window.innerWidth * CORE_ZONE_WIDTH_FRACTION) / 2;
+    const halfH = (window.innerHeight * CORE_ZONE_HEIGHT_FRACTION) / 2;
+    return {
+      left: centerX - halfW,
+      right: centerX + halfW,
+      top: centerY - halfH,
+      bottom: centerY + halfH
+    };
+  }
+
+  // Button Safe Zone: replaces the old large Bottom Control Zone.
+  // Only the three buttons themselves, each with a small ~12px
+  // margin, are protected — not a band across the bottom of the
+  // page. Everywhere else near/below the buttons is fair game for
+  // information windows.
+  const BUTTON_SAFE_MARGIN = 12; // within the requested 8–15px range
+
+  function getButtonSafeZones() {
+    const margin = BUTTON_SAFE_MARGIN;
+    return [
+      document.getElementById('btnWait'),
+      document.getElementById('btnAccelerate'),
+      document.getElementById('btnSkip')
+    ].map(btn => {
+      const r = btn.getBoundingClientRect();
+      return {
+        left: r.left - margin,
+        right: r.right + margin,
+        top: r.top - margin,
+        bottom: r.bottom + margin
+      };
+    });
+  }
+
+  function rectsOverlap(a, b) {
+    return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+  }
+
+  // Places `el` along a direction (angleDeg, 0–360) at a distance
+  // controlled by `closeness` (0 = as far out as the viewport
+  // allows, 1 = as close to the Core Zone edge as allowed). Whatever
+  // starting distance that produces, the loop below then measures
+  // el's OWN real bounding box — once it actually exists in the
+  // DOM — and keeps nudging it further out, in 16px steps, until it
+  // genuinely no longer overlaps the Core Zone rectangle. This is
+  // what makes the limit real rather than a fixed layout guess: it
+  // works no matter how large the item's text turns out to be, and
+  // no matter what screen size this is running on.
+  function placeOutsideCoreZone(el, angleDeg, closeness) {
+    const core = getCoreZoneRect();
+    const centerX = (core.left + core.right) / 2;
+    const centerY = (core.top + core.bottom) / 2;
+    const angleRad = (angleDeg * Math.PI) / 180;
+    const dirX = Math.cos(angleRad);
+    const dirY = Math.sin(angleRad);
+
+    const halfWidth = (core.right - core.left) / 2;
+    const halfHeight = (core.bottom - core.top) / 2;
+    const minRadiusX = dirX !== 0 ? Math.abs(halfWidth / dirX) : Infinity;
+    const minRadiusY = dirY !== 0 ? Math.abs(halfHeight / dirY) : Infinity;
+    const minRadius = Math.min(minRadiusX, minRadiusY);
+
+    const maxRadiusX = dirX > 0 ? (window.innerWidth - centerX) / dirX
+                      : dirX < 0 ? (-centerX) / dirX
+                      : Infinity;
+    const maxRadiusY = dirY > 0 ? (window.innerHeight - centerY) / dirY
+                      : dirY < 0 ? (-centerY) / dirY
+                      : Infinity;
+    const maxRadius = Math.max(minRadius + 20, Math.min(maxRadiusX, maxRadiusY) - 12);
+
+    let radius = maxRadius - closeness * (maxRadius - minRadius);
+
+    for (let i = 0; i < 30; i++) {
+      const x = centerX + dirX * radius;
+      const y = centerY + dirY * radius;
+      el.style.left = x + 'px';
+      el.style.top = y + 'px';
+      const elRect = el.getBoundingClientRect();
+      if (!rectsOverlap(elRect, core)) break;
+      radius += 16;
+    }
+  }
+
+  // Each future entry will look something like:
+  //   { id: 'clock', triggerAtMs: 10000, angle: 45, closeness: 0,
+  //     render: () => '23:17' }
+  // angle/closeness are optional — random and "far" are the
+  // defaults. Left empty on purpose in this step.
+  const informationItems = [];
+
+  const informationManager = {
+    layer: informationLayer,
+    items: informationItems,
+    shownIds: new Set(),
+    placed: [], // { el, angle, closeness } — kept so placement can
+                // be recalculated if the window is resized
+
+    evaluate(waitingTimeMs) {
+      this.items.forEach(item => {
+        if (!this.shownIds.has(item.id) && waitingTimeMs >= item.triggerAtMs) {
+          this.shownIds.add(item.id);
+          this.renderItem(item);
+        }
+      });
+    },
+
+    renderItem(item) {
+      let el;
+      if (typeof item.renderElement === 'function') {
+        el = item.renderElement();
+      } else {
+        el = document.createElement('div');
+        el.className = 'info-item';
+        el.textContent = typeof item.render === 'function' ? item.render() : (item.content || '');
+      }
+      el.style.position = 'absolute';
+      this.layer.appendChild(el);
+
+      if (item.fixedStyle) {
+        // Some items — like a real system clock — belong in an exact
+        // corner, not a computed direction around 37%. This still
+        // never touches the Core Zone: a page corner is always far
+        // from a centered element, so no collision check is needed.
+        Object.assign(el.style, item.fixedStyle);
+      } else {
+        const angle = typeof item.angle === 'number' ? item.angle : Math.random() * 360;
+        const closeness = typeof item.closeness === 'number' ? item.closeness : 0;
+        placeOutsideCoreZone(el, angle, closeness);
+        this.placed.push({ el, angle, closeness });
+      }
+
+      if (typeof item.onRender === 'function') {
+        item.onRender(el);
+      }
+    },
+
+    repositionAll() {
+      this.placed.forEach(entry => {
+        placeOutsideCoreZone(entry.el, entry.angle, entry.closeness);
+      });
+    }
+  };
+
+  // If the window is resized, the Core Zone's real position/size
+  // changes too — so every already-placed item is re-checked against
+  // it, not left at a stale coordinate.
+  window.addEventListener('resize', () => {
+    informationManager.repositionAll();
+  });
+
+  // ============================================================
+  // DEVICE CLOCK — the first real (non-preview) information item.
+  //
+  // Shows the user's own device time, HH:MM, 24-hour format. Never
+  // shown before waitingTime reaches 10s (enforced the same way as
+  // every other item: triggerAtMs on the informationItems entry).
+  // Placed at closeness: 0, i.e. as far out as the Core Zone system
+  // allows — pinned to a page edge, nowhere near 37%.
+  // ============================================================
+
+  function formatClock(date) {
+    const pad2 = n => String(n).padStart(2, '0');
+    return pad2(date.getHours()) + ':' + pad2(date.getMinutes());
+  }
+
+  // Rather than a naive setInterval(60000) — which could leave the
+  // display showing a stale minute for up to 59s if it happened to
+  // start off-cycle — this reads the real device clock, then times
+  // its next update to land exactly on the next real minute
+  // boundary. So the displayed minute changes exactly when the
+  // device's own minute changes.
+  function scheduleClockUpdate(el) {
+    function update() {
+      el.textContent = formatClock(new Date());
+      const now = new Date();
+      const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
+      setTimeout(update, msToNextMinute);
+    }
+    update();
+  }
+
+  informationItems.push({
+    id: 'device-clock',
+    triggerAtMs: 10000,
+    fixedStyle: { position: 'fixed', top: '24px', right: '24px' },
+    renderElement: () => {
+      const el = document.createElement('div');
+      el.className = 'info-clock';
+      return el;
+    },
+    onRender: (el) => {
+      scheduleClockUpdate(el);
+      // Fade in gently rather than popping in instantly.
+      requestAnimationFrame(() => {
+        el.style.opacity = '1';
+      });
+    }
+  });
+
+  // ============================================================
+  // The old scattered-card demo content (weather + 8 preview cards,
+  // evenly placed around 37%) has been replaced below by the
+  // window-stacking system. The clock above is untouched.
+  // ============================================================
+
+  // ============================================================
+  // WINDOW STACK — Stage 3 visual upgrade.
+  //
+  // Every information source (except the clock, which has no close
+  // button and never moves) now appears as a small light-chrome
+  // "window": title bar + × + content. Windows spawn on a staged
+  // schedule, land at deliberately misaligned (not gridded) seed
+  // positions, and are guaranteed — by measuring their own real
+  // rendered box against the live Core Zone rectangle — to never
+  // cover 37%. Closing a window hides it for exactly one second,
+  // then it reappears near its previous spot (with a random nudge)
+  // on top of the stack (a strictly increasing z-index), and drifts
+  // a little closer to center each time this happens, up to the
+  // same hard Core Zone limit. None of this touches sessionData,
+  // waitingTime, or the WAIT/ACCELERATE/SKIP handlers.
+  // ============================================================
+
+  let windowZCounter = 100; // starts above everything else already
+                             // on the page; .controls/.debug-panel
+                             // are pinned to 9998 so they are always
+                             // safely above this regardless of how
+                             // long a session runs
+
+  // Twelve seed anchor points. The first several spread across
+  // clearly different regions before any repeats — including three
+  // positions specifically BELOW the buttons row, which the previous
+  // slot list never actually included (that's why nothing was
+  // appearing down there).
+  const windowSeedSlots = [
+    { xFrac: 0.05, yFrac: 0.58 }, // 1st: bottom-left (above buttons)
+    { xFrac: 0.68, yFrac: 0.07 }, // 2nd: top-right
+    { xFrac: 0.15, yFrac: 0.90 }, // 3rd: BELOW buttons, left
+    { xFrac: 0.55, yFrac: 0.92 }, // 4th: BELOW buttons, center
+    { xFrac: 0.01, yFrac: 0.40 }, // 5th: left side
+    { xFrac: 0.80, yFrac: 0.88 }, // 6th: BELOW buttons, right
+    { xFrac: 0.02, yFrac: 0.05 }, // 7th: top-left
+    { xFrac: 0.72, yFrac: 0.25 }, // 8th: right side
+    { xFrac: 0.08, yFrac: 0.20 }, // 9th: upper-left
+    { xFrac: 0.65, yFrac: 0.42 }, // 10th: right-center
+    { xFrac: 0.30, yFrac: 0.04 }, // 11th: top-center-left
+    { xFrac: 0.45, yFrac: 0.06 }  // 12th: top-center
+  ];
+  let windowSlotIndex = 0;
+
+  // Window sizes are responsive (clamp: floor, viewport-relative,
+  // ceiling) per your size brackets, rather than fixed pixel values.
+  const windowTypeDefs = {
+    weather: {
+      title: '天气', width: 'clamp(300px, 32vw, 420px)',
+      bodyHTML: '<div class="win-eyebrow">天津</div>' +
+                '<div class="win-headline win-headline--big">23°C</div>' +
+                '<div class="win-meta">多云 · 今日 29° / 21° · 降水概率 40%</div>'
+    },
+    notification: {
+      title: '消息', width: 'clamp(280px, 28vw, 380px)',
+      bodyHTML: '<div class="win-eyebrow">现在</div>' +
+                '<div class="win-headline">你有 3 条新消息</div>'
+    },
+    news: {
+      title: '新闻', width: 'clamp(420px, 40vw, 600px)',
+      bodyHTML: '<div class="win-tag">科技</div>' +
+                '<div class="win-headline">研究团队发布新一代处理器架构</div>' +
+                '<div class="win-meta">3分钟前</div>'
+    },
+    trending: {
+      title: '热搜', width: 'clamp(300px, 30vw, 400px)',
+      bodyHTML: '<div class="win-trending">' +
+                  '<div class="win-rank">3</div>' +
+                  '<div><div class="win-headline">#今日热门话题</div>' +
+                  '<div class="win-meta">12.4万人讨论</div></div>' +
+                '</div>'
+    },
+    recommendation: {
+      title: '为你推荐', width: 'clamp(380px, 36vw, 520px)',
+      bodyHTML: '<div class="win-tag">推荐</div>' +
+                '<div class="win-headline">根据你的浏览记录为你推荐</div>'
+    },
+    system: {
+      title: '系统更新', width: 'clamp(350px, 34vw, 450px)',
+      bodyHTML: '<div class="win-headline">系统更新可用</div>' +
+                '<div class="win-meta">建议尽快安装以获得最新功能</div>'
+    },
+    browser: {
+      title: '浏览器', width: 'clamp(350px, 32vw, 420px)',
+      bodyHTML: '<div class="win-headline">该网站想要发送通知</div>' +
+                '<div class="win-meta win-meta--row"><span>允许</span><span>阻止</span></div>'
+    },
+    logistics: {
+      title: '物流', width: 'clamp(280px, 28vw, 380px)',
+      bodyHTML: '<div class="win-eyebrow">派送中</div>' +
+                '<div class="win-headline">您的包裹预计今天送达</div>' +
+                '<div class="win-meta">最近更新 · 10分钟前</div>'
+    },
+    messaging: {
+      title: '即时通讯', width: 'clamp(280px, 28vw, 380px)',
+      bodyHTML: '<div class="win-eyebrow">对话</div>' +
+                '<div class="win-headline">对方正在输入……</div>'
+    },
+    calendar: {
+      title: '日程', width: 'clamp(260px, 26vw, 360px)',
+      bodyHTML: '<div class="win-schedule-row"><span class="win-schedule-time">10:00</span><span>线上会议</span></div>' +
+                '<div class="win-schedule-row"><span class="win-schedule-time">14:00</span><span>项目讨论</span></div>' +
+                '<div class="win-schedule-row"><span class="win-schedule-time">18:30</span><span>晚餐</span></div>'
+    },
+    'mail-unread': {
+      title: '邮件', width: 'clamp(280px, 28vw, 380px)',
+      bodyHTML: '<div class="win-eyebrow">收件箱</div><div class="win-headline">你有 5 封未读邮件</div>'
+    },
+    'mail-work': {
+      title: '邮件', width: 'clamp(280px, 28vw, 380px)',
+      bodyHTML: '<div class="win-eyebrow">工作</div><div class="win-headline">新的工作邮件</div>'
+    },
+    'mail-reply': {
+      title: '邮件', width: 'clamp(280px, 28vw, 380px)',
+      bodyHTML: '<div class="win-eyebrow">提醒</div><div class="win-headline">回复提醒</div>'
+    },
+    'file-transfer': {
+      title: '文件', width: 'clamp(350px, 36vw, 500px)',
+      bodyHTML: '<div class="win-eyebrow">项目计划书.docx</div>' +
+                '<div class="win-headline" data-role="status">正在上传……</div>' +
+                '<div class="win-meta">文件大小 284MB</div>',
+      dynamicUpdate: (el) => {
+        setTimeout(() => {
+          const status = el.querySelector('[data-role="status"]');
+          if (status) status.textContent = '上传完成';
+        }, 3000);
+      }
+    },
+    'file-save': {
+      title: '保存', width: 'clamp(220px, 20vw, 300px)',
+      bodyHTML: '<div class="win-save-track"><div class="win-save-fill" data-role="fill"></div></div>' +
+                '<div class="win-meta" data-role="status">正在保存……</div>',
+      dynamicUpdate: (el) => {
+        requestAnimationFrame(() => {
+          const fill = el.querySelector('[data-role="fill"]');
+          if (fill) fill.style.width = '100%';
+        });
+        setTimeout(() => {
+          const status = el.querySelector('[data-role="status"]');
+          if (status) status.textContent = '自动保存完成';
+        }, 1800);
+      }
+    },
+    'location-permission': {
+      title: '位置权限', width: 'clamp(350px, 34vw, 450px)',
+      bodyHTML: '<div class="win-headline">允许此网站访问您的位置吗？</div>' +
+                '<div class="win-meta win-meta--row"><span>允许</span><span>拒绝</span></div>'
+    },
+    'camera-permission': {
+      title: '摄像头权限', width: 'clamp(350px, 34vw, 450px)',
+      bodyHTML: () => {
+        const label = Math.random() < 0.5 ? '摄像头' : '麦克风';
+        return '<div class="win-headline">此网站正在请求使用您的' + label + '</div>' +
+               '<div class="win-meta win-meta--row"><span>允许</span><span>拒绝</span></div>';
+      }
+    },
+    'battery': {
+      title: '设备状态', width: 'clamp(300px, 30vw, 400px)',
+      bodyHTML: () => Math.random() < 0.5
+        ? '<div class="win-headline">电池电量 18%</div><div class="win-meta">建议连接电源</div>'
+        : '<div class="win-headline">设备存储空间不足</div>'
+    },
+    'login-alert': {
+      title: '登录提醒', width: 'clamp(340px, 32vw, 430px)',
+      bodyHTML: '<div class="win-headline">检测到新的登录活动</div>' +
+                '<div class="win-meta">是否是你本人？</div>' +
+                '<div class="win-meta">查看活动</div>'
+    },
+    'software-update': {
+      title: '软件更新', width: 'clamp(340px, 32vw, 430px)',
+      bodyHTML: '<div class="win-headline">应用有 3 个待更新</div>' +
+                '<div class="win-meta">新版本可用</div>'
+    },
+    'subscription': {
+      title: '订阅提醒', width: 'clamp(340px, 32vw, 430px)',
+      bodyHTML: '<div class="win-headline">你的会员将在 3 天后到期</div>' +
+                '<div class="win-meta">立即续费</div>'
+    }
+  };
+
+  // Nudges `el` (already positioned via style.left/top) clear of the
+  // Core Zone AND each of the three tiny button safe zones,
+  // measuring el's own real rendered box each time. Overlapping the
+  // Core Zone pushes it away from the Core Zone's center; overlapping
+  // any button's safe zone pushes it away from that button's center.
+  // Multiple overlaps combine. Runs until nothing is violated, then
+  // clamps the result to stay fully on-screen.
+  function keepWindowInSafeArea(el) {
+    for (let i = 0; i < 80; i++) {
+      const r = el.getBoundingClientRect();
+      const core = getCoreZoneRect();
+      const buttonZones = getButtonSafeZones();
+      const hitsCore = rectsOverlap(r, core);
+      const hitZones = buttonZones.filter(zone => rectsOverlap(r, zone));
+      if (!hitsCore && hitZones.length === 0) break;
+
+      let dx = 0, dy = 0;
+      if (hitsCore) {
+        const rCenterX = (r.left + r.right) / 2;
+        const rCenterY = (r.top + r.bottom) / 2;
+        const coreCenterX = (core.left + core.right) / 2;
+        const coreCenterY = (core.top + core.bottom) / 2;
+        let vx = rCenterX - coreCenterX;
+        let vy = rCenterY - coreCenterY;
+        const len = Math.sqrt(vx * vx + vy * vy) || 1;
+        dx += vx / len;
+        dy += vy / len;
+      }
+      hitZones.forEach(zone => {
+        const rCenterX = (r.left + r.right) / 2;
+        const rCenterY = (r.top + r.bottom) / 2;
+        const zCenterX = (zone.left + zone.right) / 2;
+        const zCenterY = (zone.top + zone.bottom) / 2;
+        let vx = rCenterX - zCenterX;
+        let vy = rCenterY - zCenterY;
+        const len = Math.sqrt(vx * vx + vy * vy) || 1;
+        dx += vx / len;
+        dy += vy / len;
+      });
+      const len2 = Math.sqrt(dx * dx + dy * dy) || 1;
+      dx /= len2;
+      dy /= len2;
+
+      const curLeft = parseFloat(el.style.left) || 0;
+      const curTop = parseFloat(el.style.top) || 0;
+      el.style.left = (curLeft + dx * 14) + 'px';
+      el.style.top = (curTop + dy * 14) + 'px';
+    }
+    const r = el.getBoundingClientRect();
+    const maxLeft = Math.max(8, window.innerWidth - r.width - 8);
+    const maxTop = Math.max(8, window.innerHeight - r.height - 8);
+    const left = Math.min(Math.max(parseFloat(el.style.left) || 0, 8), maxLeft);
+    const top = Math.min(Math.max(parseFloat(el.style.top) || 0, 8), maxTop);
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+  }
+
+  // Computes a starting point for a window: its fixed seed anchor,
+  // pulled part-way toward the Core Zone's center based on how long
+  // this session has actually run (sessionData.waitingTime) — capped
+  // well short of the center, since keepWindowInSafeArea enforces the
+  // real, absolute limit regardless of this value. This is what
+  // makes windows "move closer over time" instead of at a fixed
+  // distance forever.
+  function computeSeededPosition(slot) {
+    const core = getCoreZoneRect();
+    const coreCenterX = (core.left + core.right) / 2;
+    const coreCenterY = (core.top + core.bottom) / 2;
+    const anchorX = slot.xFrac * window.innerWidth;
+    const anchorY = slot.yFrac * window.innerHeight;
+    const elapsedMinutes = sessionData.waitingTime / 60000;
+    const closeness = Math.min(0.55, elapsedMinutes * 0.5);
+    return {
+      x: anchorX + (coreCenterX - anchorX) * closeness,
+      y: anchorY + (coreCenterY - anchorY) * closeness
+    };
+  }
+
+  function spawnWindow(type) {
+    const def = windowTypeDefs[type];
+    const el = document.createElement('div');
+    el.className = 'info-window';
+    el.style.width = def.width;
+    el.style.opacity = '0';
+    const body = typeof def.bodyHTML === 'function' ? def.bodyHTML() : def.bodyHTML;
+    el.innerHTML =
+      '<div class="info-window__titlebar">' +
+        '<span class="info-window__title">' + def.title + '</span>' +
+        '<button class="info-window__close" type="button" aria-label="close">×</button>' +
+      '</div>' +
+      '<div class="info-window__body">' + body + '</div>';
+
+    informationLayer.appendChild(el);
+
+    const slot = windowSeedSlots[windowSlotIndex % windowSeedSlots.length];
+    windowSlotIndex++;
+
+    const pos = computeSeededPosition(slot);
+    el.style.left = pos.x + 'px';
+    el.style.top = pos.y + 'px';
+    keepWindowInSafeArea(el);
+
+    windowZCounter += 1;
+    el.style.zIndex = windowZCounter;
+    requestAnimationFrame(() => {
+      el.style.opacity = '1';
+      AudioManager.playPop(false); // real visual appearance, not creation
+    });
+
+    if (typeof def.dynamicUpdate === 'function') {
+      def.dynamicUpdate(el);
+    }
+
+    window.addEventListener('resize', () => keepWindowInSafeArea(el));
+
+    el.querySelector('.info-window__close').addEventListener('click', () => {
+      AudioManager.playClose();
+      el.style.opacity = '0';
+      setTimeout(() => {
+        const nextPos = computeSeededPosition(slot);
+        const jitterX = Math.random() * 60 - 30;
+        const jitterY = Math.random() * 60 - 30;
+        el.style.left = (nextPos.x + jitterX) + 'px';
+        el.style.top = (nextPos.y + jitterY) + 'px';
+        keepWindowInSafeArea(el);
+        windowZCounter += 1;
+        el.style.zIndex = windowZCounter;
+        el.style.opacity = '1';
+        AudioManager.playPop(true); // reappearance — never louder than first appearance
+      }, 1000);
+    });
+  }
+
+  // Staged density, updated per your latest rhythm request:
+  //   0–25s:  almost nothing
+  //   25s:    Weather appears
+  //   29–34s: Messages, Calendar appear
+  //   38s+:   a burst of 5–6 windows, ~1.5s apart on average
+  //   after that: the rest arrive faster (~0.8s apart) — noticeably
+  //   quicker than the opening burst, but never a 0.1s-interval spam.
+  const windowSchedule = [
+    { type: 'weather',              at: 25000 },
+    { type: 'notification',         at: 30000 },
+    { type: 'calendar',             at: 32500 },
+    // Burst: 6 windows, ~1.5s apart, starting at 38s
+    { type: 'news',                 at: 38000 },
+    { type: 'mail-unread',          at: 39500 },
+    { type: 'mail-work',            at: 41000 },
+    { type: 'mail-reply',           at: 42500 },
+    { type: 'file-transfer',        at: 44000 },
+    { type: 'file-save',            at: 45500 },
+    // Faster pace afterward: ~0.8s apart
+    { type: 'trending',             at: 46300 },
+    { type: 'recommendation',       at: 47100 },
+    { type: 'system',               at: 47900 },
+    { type: 'browser',              at: 48700 },
+    { type: 'logistics',            at: 49500 },
+    { type: 'location-permission',  at: 50300 },
+    { type: 'camera-permission',    at: 51100 },
+    { type: 'battery',              at: 51900 },
+    { type: 'login-alert',          at: 52700 },
+    { type: 'software-update',      at: 53500 },
+    { type: 'subscription',         at: 54300 },
+    { type: 'messaging',            at: 55100 }
+  ];
+  const spawnedWindowTypes = new Set();
+
+  setInterval(() => {
+    windowSchedule.forEach(entry => {
+      if (!spawnedWindowTypes.has(entry.type) && sessionData.waitingTime >= entry.at) {
+        spawnedWindowTypes.add(entry.type);
+        spawnWindow(entry.type);
+      }
+    });
+  }, 200);
+
+  // Own independent scheduler — does not modify or replace the
+  // existing setInterval(tick, 100) used for the debug panel.
+  setInterval(() => {
+    informationManager.evaluate(sessionData.waitingTime);
+  }, 200);
+</script>
+
+</body>
+</html>
